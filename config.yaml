@@ -1,0 +1,30 @@
+interval: 60s
+
+servers:
+  - name: HTTPS Check NET
+    url: https://www.cloudflare.com
+    timeout: 3s
+
+  - name: ITCP Check GOOG
+    url: tcp://8.8.8.8:53
+    timeout: 2s
+
+  - name: Portfolio
+    url: https://www.hayechase.com
+    timeout: 5s
+
+  - name: Fude Front
+    url: https://www.fudesoftware.com
+    timeout: 5s
+
+  - name: Fude Back
+    url: https://api.fudesoftware.com/api/status
+    timeout: 5s
+
+  - name: CdWx Front
+    url: https://codewax.fyi
+    timeout: 5s
+
+  - name: CdWx Back
+    url: https://api.codewax.fyi/api/status
+    timeout: 5s
