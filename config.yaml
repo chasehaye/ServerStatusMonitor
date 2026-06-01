@@ -4,7 +4,7 @@ servers:
   - name: HTTPS Check NET
     url: https://www.cloudflare.com
     interval: 299s
-    timeout: 3s
+    timeout: 10s
 
   - name: ITCP Check GOOG
     url: tcp://8.8.8.8:53
@@ -16,22 +16,47 @@ servers:
     interval: 301s
     timeout: 5s
 
-  - name: Fude Front
+  - name: Portfolio CI/CD
+    url: gh-actions://chasehaye/portfolio_polished/main
+    interval: 120s
+    timeout: 30s
+
+  - name: Fude-F
     url: https://www.fudesoftware.com
     interval: 61s
     timeout: 5s
 
-  - name: Fude Back
+  - name: Fude-F CI/CD
+    url: gh-actions://chasehaye/fude_software_front/main
+    interval: 121s
+    timeout: 30s
+
+  - name: Fude-B
     url: https://api.fudesoftware.com/api/status
     interval: 31s
     timeout: 5s
 
-  - name: CdWx Front
+  - name: Fude-B CI/CD
+    url: gh-actions://chasehaye/log_relay/main
+    interval: 122s
+    timeout: 30s
+
+  - name: CdWx-F
     url: https://codewax.fyi
     interval: 63s
     timeout: 5s
 
-  - name: CdWx Back
+  - name: CdWx-F CI/CD
+    url: gh-actions://chasehaye/codewax-front/main
+    interval: 123s
+    timeout: 30s
+
+  - name: CdWx-B
     url: https://api.codewax.fyi/api/status
     interval: 33s
     timeout: 5s
+
+  - name: CdWx-B CI/CD
+    url: gh-actions://chasehaye/codewax-back/main
+    interval: 124s
+    timeout: 30s

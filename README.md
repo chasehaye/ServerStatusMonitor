@@ -2,7 +2,7 @@
 
 # 🧋 `ServerStatusMonitor`
 
-> A terminal UI for monitoring servers and services — checks HTTP/HTTPS endpoints and raw TCP ports, tracks uptime history, and sounds an alarm when something goes down.
+> A terminal UI for monitoring servers and services — checks HTTP/HTTPS endpoints, raw TCP ports, and GitHub Actions workflows. Tracks uptime history and sounds an alarm when something goes down.
 
 ![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square&logo=go)
 ![SQLite](https://img.shields.io/badge/SQLite-uptime_log-003B57?style=flat-square&logo=sqlite)
@@ -23,9 +23,9 @@
 │  Test 500                      https://httpstat.us/500                              ⬢  DOWN        500     —         12.50% │
 │  Test 404                      https://httpstat.us/404                              ◆  WARN        404     —         87.20% │
 │  └ connection refused: dial tcp 0.0.0.0:404                                                                                 │
-│  My API                        https://api.example.com/health                       ⣾  checking…  —       —         —       │
+│  Test CI Failure               gh-actions://sindresorhus/got/refs/heads/main        ⬢  DOWN        —       212ms     80.00% │
 ├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│  ↑/↓ or ←/→ navigate · r recheck · R recheck all · a mute · q quit · next check in 7s                                       │
+│  ↑/↓ or ←/→ navigate · r recheck · R recheck all · a mute · q quit · next check in 7s                                      │
 ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -33,8 +33,10 @@
 
 ## ✨ Features
 
-- 🌐 **HTTP/HTTPS & TCP monitoring** — checks any URL or raw TCP address (e.g. `tcp://8.8.8.8:53`)
-- 🚦 **Four-state status display** — `UP`, `RDR` (redirect), `WARN` (4xx), `DOWN` (5xx / unreachable)
+- 🌐 **HTTP/HTTPS monitoring** — checks any endpoint, treats redirects as their own state
+- 🔌 **TCP monitoring** — raw socket dial for non-HTTP services (DNS, databases, etc.)
+- 🔁 **GitHub Actions monitoring** — polls the latest workflow run on any branch via `gh-actions://`
+- 🚦 **Four-state status display** — `UP`, `RDR` (redirect), `WARN` (4xx / in-progress CI), `DOWN` (5xx / failed CI)
 - 📊 **24h uptime percentage** — calculated from a local SQLite event log
 - 🔔 **Audio alarm** — plays `alarm.wav` on loop when any server is down; toggle mute with `a`
 - ⏱️ **Per-server intervals & timeouts** — override the global poll interval per entry
@@ -48,7 +50,7 @@
 ### From Source
 
 ```bash
-git clone https://github.com/your-username/ServerStatusMonitor.git
+git clone https://github.com/chasehaye/ServerStatusMonitor.git
 cd ServerStatusMonitor
 go build -o ServerStatusMonitor .
 ```
@@ -69,12 +71,17 @@ brew install ffmpeg
 sudo apt install ffmpeg gcc
 ```
 
+**Arch Linux:**
+```bash
+sudo pacman -S ffmpeg gcc
+```
+
 ---
 
 ## 🚀 Usage
 
 ```bash
-# Run with the default config.yaml in the current directory
+# Run with config.yaml in the current directory
 ./ServerStatusMonitor
 ```
 
@@ -84,6 +91,14 @@ On startup the app:
 3. Immediately checks all servers, then polls on each server's configured interval
 
 Place an `alarm.wav` file in the same directory as the binary if you want audio alerts.
+
+For GitHub Actions monitoring on private repos, set a personal access token:
+```bash
+export GITHUB_TOKEN=your_token_here
+./ServerStatusMonitor
+```
+
+Public repos work without a token but will be rate-limited by GitHub's API (60 req/hr unauthenticated).
 
 ---
 
@@ -102,7 +117,7 @@ Place an `alarm.wav` file in the same directory as the binary if you want audio 
 
 ## ⚙️ Configuration
 
-The app reads `config.yaml` from the working directory. There is no other search path — place the file alongside the binary or run from the directory that contains it.
+The app reads `config.yaml` from the working directory. Place it alongside the binary or run from the directory that contains it.
 
 ### Example `config.yaml`
 
@@ -113,7 +128,7 @@ interval: 60s
 servers:
   - name: HTTPS Check NET
     url: https://www.cloudflare.com
-    interval: 50s      # overrides global interval for this server
+    interval: 50s
     timeout: 3s
 
   - name: TCP Check GOOG
@@ -121,9 +136,20 @@ servers:
     interval: 11s
     timeout: 8s
 
-  - name: My API
-    url: https://api.example.com/health
-    timeout: 5s        # uses global interval (60s)
+  - name: Test 500
+    url: https://httpstat.us/500
+    interval: 5s
+    timeout: 35s
+
+  - name: Test 404
+    url: https://httpstat.us/404
+    interval: 5s
+    timeout: 3s
+
+  - name: Test CI Failure
+    url: gh-actions://sindresorhus/got/refs/heads/repro-2444
+    interval: 120s
+    timeout: 10s
 ```
 
 ### Configuration Reference
@@ -132,27 +158,38 @@ servers:
 |-------|------|---------|-------------|
 | `interval` | duration | `10s` | Global poll interval applied to all servers that don't set their own |
 | `servers[].name` | string | — | Display name shown in the TUI |
-| `servers[].url` | string | — | HTTP/HTTPS URL **or** `tcp://host:port` |
+| `servers[].url` | string | — | URL to check — see formats below |
 | `servers[].interval` | duration | _(global)_ | Per-server poll interval; omit to use the global value |
 | `servers[].timeout` | duration | `5s` | Per-server connection/response timeout |
 
-### URL formats
+### URL Formats
 
 | Format | Example | Notes |
 |--------|---------|-------|
-| HTTP/HTTPS | `https://example.com` | Follows redirects as `RDR` (3xx shown as up-with-warning) |
+| HTTP/HTTPS | `https://example.com` | 3xx treated as `RDR`, 4xx as `WARN`, 5xx as `DOWN` |
 | TCP | `tcp://8.8.8.8:53` | Raw socket dial — no HTTP involved |
+| GitHub Actions | `gh-actions://owner/repo` | Checks latest run on default branch |
+| GitHub Actions (branch) | `gh-actions://owner/repo/refs/heads/main` | Checks latest run on a specific branch |
+
+### GitHub Actions Status Mapping
+
+| Run state | TUI status |
+|-----------|-----------|
+| `success` | `●  UP` |
+| `in_progress` or `queued` | `»  RDR` (up with warning) |
+| `failure` | `⬢  DOWN` |
+| anything else / no runs | `◆  WARN` |
 
 ---
 
-## 📊 Status indicators
+## 📊 Status Indicators
 
 | Symbol | Label | Meaning |
 |--------|-------|---------|
-| `●` | UP | 2xx response or successful TCP connect |
-| `»` | RDR | 3xx redirect — server is reachable but redirecting |
-| `◆` | WARN | 4xx client error — server responded but request failed |
-| `⬢` | DOWN | 5xx server error or connection failure |
+| `●` | UP | 2xx / TCP connect success / CI passed |
+| `»` | RDR | 3xx redirect or CI run in progress |
+| `◆` | WARN | 4xx client error or no CI runs found |
+| `⬢` | DOWN | 5xx server error, connection failure, or CI failed |
 
 HTTP status codes are colour-coded in the **Code** column: green (2xx), yellow (3xx), orange (4xx), red (5xx).
 
@@ -172,7 +209,7 @@ CREATE TABLE events (
 );
 ```
 
-The **Uptime** column in the TUI shows the percentage of successful checks in the **last 24 hours** for each server, recalculated after every check result arrives.
+The **Uptime** column shows the percentage of successful checks in the **last 24 hours**, recalculated after every result.
 
 ---
 
@@ -183,10 +220,10 @@ The **Uptime** column in the TUI shows the percentage of successful checks in th
 ```
 ServerStatusMonitor/
 ├── main.go          # Bubble Tea model, Init/Update/View
-├── check.go         # HTTP & TCP health-check logic, CheckResult type
+├── check.go         # HTTP, TCP & GitHub Actions check logic
 ├── config.go        # Config & Server types, YAML loading
 ├── db.go            # SQLite init, event logging, uptime calculation
-├── config.yaml      # Your server list (not committed — add to .gitignore)
+├── config.yaml      # Your server list (add to .gitignore)
 ├── alarm.wav        # Audio file played when a server is down
 └── uptime.db        # Auto-created SQLite database
 ```
@@ -224,19 +261,20 @@ Contributions are welcome! Here's how:
    git checkout -b feat/my-feature
    ```
 3. **Make your changes** — keep PRs focused on one thing
-4. **Test manually** — there's no test suite yet, so run the app against real/mock endpoints
+4. **Test manually** — run the app against real/mock endpoints
 5. **Commit** with a clear message:
    ```bash
    git commit -m "feat: add latency threshold warnings"
    ```
 6. **Open a Pull Request** and describe what you changed and why
 
-### Good first ideas
+### Good First Ideas
 
 - Add a `--config` flag to specify a custom config path
-- Support `vim` keybindings (`j`/`k`)
+- Support `j`/`k` vim keybindings
 - Add a detail pane showing recent event history for the selected server
 - Export uptime stats to JSON or CSV
+- Support more CI providers (GitLab, Bitbucket Pipelines)
 
 ### Reporting Bugs
 

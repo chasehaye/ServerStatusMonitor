@@ -20,3 +20,8 @@ servers:
     url: https://httpstat.us/404
     interval: 5s
     timeout: 3s
+
+  - name: Test CI Failure
+    url: gh-actions://sindresorhus/got/refs/heads/repro-2444
+    interval: 120s
+    timeout: 10s
