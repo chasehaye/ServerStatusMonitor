@@ -8,9 +8,17 @@ import (
 )
 
 type Server struct {
-	Name    string        `yaml:"name"`
-	URL     string        `yaml:"url"`
-	Timeout time.Duration `yaml:"timeout"`
+	Name     string        `yaml:"name"`
+	URL      string        `yaml:"url"`
+	Timeout  time.Duration `yaml:"timeout"`
+	Interval time.Duration `yaml:"interval"`
+}
+
+func (s Server) interval(globalInterval time.Duration) time.Duration {
+    if s.Interval == 0 {
+        return globalInterval
+    }
+    return s.Interval
 }
 
 func (s Server) timeout() time.Duration {

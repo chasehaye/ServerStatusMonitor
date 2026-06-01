@@ -1,34 +1,22 @@
-interval: 10s
+interval: 60s
 
 servers:
-  - name: Google
-    url: https://www.google.com
-    timeout: 5s
-
-  - name: GitHub
-    url: https://github.com
-    timeout: 5s
-
-  - name: Cloudflare DNS
+  - name: HTTPS Check NET
     url: https://www.cloudflare.com
-    timeout: 5s
-
-  - name: Internal DB
-    url: tcp://db.internal:5432
+    interval: 50s
     timeout: 3s
 
-  - name: Bad Server
-    url: https://this.does.not.exist.example.com
-    timeout: 5s
-
-  - name: Google Public DNS (TCP)
+  - name: ITCP Check GOOG
     url: tcp://8.8.8.8:53
-    timeout: 2s
+    interval: 11s
+    timeout: 8s
 
-  - name: HTTP to HTTPS Redirect Test
-    url: http://github.com
-    timeout: 5s
+  - name: Test 500
+    url: https://httpstat.us/500
+    interval: 5s
+    timeout: 35s
 
-  - name: GitHub 404 Error Test
-    url: https://github.com/this-page-absolutely-does-not-exist-12345
-    timeout: 5s
+  - name: Test 404
+    url: https://httpstat.us/404
+    interval: 5s
+    timeout: 3s

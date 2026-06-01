@@ -28,14 +28,16 @@ func checkServer(s Server) CheckResult {
 	if strings.HasPrefix(s.URL, "tcp://") {
 		addr := strings.TrimPrefix(s.URL, "tcp://")
 		conn, err := net.DialTimeout("tcp", addr, s.timeout())
-		latency := time.Since(start)
+		result.Latency = time.Since(start)
 		if err != nil {
 			result.Err = err.Error()
-			return result
+		} else {
+			conn.Close()
+			result.Up = true
 		}
-		conn.Close()
-		result.Up = true
-		result.Latency = latency
+		if elapsed := time.Since(start); elapsed < 2*time.Second {
+			time.Sleep(2*time.Second - elapsed)
+		}
 		return result
 	}
 
@@ -54,6 +56,9 @@ func checkServer(s Server) CheckResult {
         result.Err   = shortErr(err.Error())
         result.Up    = false
         result.Warn  = false
+		if elapsed := time.Since(start); elapsed < 2*time.Second {
+			time.Sleep(2*time.Second - elapsed)
+		}
         return result
     }
 	defer resp.Body.Close()
@@ -73,6 +78,11 @@ func checkServer(s Server) CheckResult {
 		result.Up = true
 		result.Warn = false
 	}
+
+	elapsed := time.Since(start)
+    if elapsed < 2 * time.Second {
+        time.Sleep(2 * time.Second - elapsed)
+    }
 	return result
 }
 
