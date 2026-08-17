@@ -1,8 +1,9 @@
 package main
 
 import (
-	"database/sql" 
+	"database/sql"
 	"fmt"
+	"math/rand"
 	"os/exec"
 	"strings"
 	"time"
@@ -15,19 +16,33 @@ import (
 
 // Messages
 type tickMsg struct{ serverName string }
-type resultMsg CheckResult
+
+// checkMsg carries the outcome of a single check attempt (attempt 0 is the
+// first try, 1-3 are retries) so Update can decide whether to finalize the
+// result or schedule the next backoff.
+type checkMsg struct {
+	result  CheckResult
+	attempt int
+}
+
+// retryMsg fires once a backoff delay elapses, triggering the next attempt.
+type retryMsg struct {
+	server  Server
+	attempt int
+}
 
 // Model
 type model struct {
-	db        *sql.DB
-	uptime    map[string]float64 
-	servers   []Server
-	results   map[string]CheckResult
-	checking  map[string]bool
-	cursor    int
-	interval  time.Duration
-	spinner   spinner.Model
-	nextCheck map[string]time.Time
+	db            *sql.DB
+	uptime        map[string]float64
+	servers       []Server
+	results       map[string]CheckResult
+	checking      map[string]bool
+	retryAttempt  map[string]int
+	cursor        int
+	interval      time.Duration
+	spinner       spinner.Model
+	nextCheck     map[string]time.Time
 	muted        bool
 	alarmRunning bool
 	stopAlarm    chan struct{}
@@ -71,29 +86,55 @@ func initialModel(db *sql.DB) model {
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#8B6842"))
 
 	return model{
-		db:        db,
-		uptime:    make(map[string]float64),
-		servers:   cfg.Servers,
-		results:   make(map[string]CheckResult),
-		checking:  make(map[string]bool),
-		interval:  cfg.Interval,
-		spinner:   sp,
-		nextCheck: make(map[string]time.Time),
+		db:           db,
+		uptime:       make(map[string]float64),
+		servers:      cfg.Servers,
+		results:      make(map[string]CheckResult),
+		checking:     make(map[string]bool),
+		retryAttempt: make(map[string]int),
+		interval:     cfg.Interval,
+		spinner:      sp,
+		nextCheck:    make(map[string]time.Time),
 	}
 }
 
 
-func tickCmd(s Server, globalInterval time.Duration) tea.Cmd {
-	d := s.interval(globalInterval)
+// jitterFraction is how far a check's next tick can randomly drift from the
+// configured interval, so servers don't all check at the same instant.
+const jitterFraction = 0.50
+
+// jitteredInterval returns base +/- up to jitterFraction, re-rolled fresh
+// each time it's called.
+func jitteredInterval(base time.Duration) time.Duration {
+	jitterRange := time.Duration(float64(base) * jitterFraction)
+	if jitterRange <= 0 {
+		return base
+	}
+	offset := time.Duration(rand.Int63n(int64(jitterRange)*2+1)) - jitterRange
+	d := base + offset
+	if d < 0 {
+		return base
+	}
+	return d
+}
+
+func tickCmd(s Server, d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(time.Time) tea.Msg {
 		return tickMsg{serverName: s.Name}
 	})
 }
 
-func checkCmd(s Server) tea.Cmd {
+// checkAttemptCmd runs a single check attempt (attempt 0 = first try).
+func checkAttemptCmd(s Server, attempt int) tea.Cmd {
 	return func() tea.Msg {
-		return resultMsg(checkServer(s))
+		r := checkServer(s)
+		r.Retries = attempt
+		return checkMsg{result: r, attempt: attempt}
 	}
+}
+
+func checkCmd(s Server) tea.Cmd {
+	return checkAttemptCmd(s, 0)
 }
 
 func checkAllCmd(servers []Server) tea.Cmd {
@@ -104,18 +145,35 @@ func checkAllCmd(servers []Server) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// retryDelayCmd waits out the backoff for `attempt` (1-indexed into
+// retryDelays), then triggers that attempt.
+func retryDelayCmd(s Server, attempt int) tea.Cmd {
+	delay := retryDelays[attempt-1]
+	return tea.Tick(delay, func(time.Time) tea.Msg {
+		return retryMsg{server: s, attempt: attempt}
+	})
+}
+
+func findServer(servers []Server, name string) Server {
+	for _, s := range servers {
+		if s.Name == name {
+			return s
+		}
+	}
+	return Server{}
+}
+
 
 func (m model) Init() tea.Cmd {
 	now := time.Now()
-	for _, s := range m.servers {
-		m.nextCheck[s.Name] = now.Add(s.interval(m.interval))
-	}
 	cmds := []tea.Cmd{
 		m.spinner.Tick,
 		checkAllCmd(m.servers),
 	}
 	for _, s := range m.servers {
-		cmds = append(cmds, tickCmd(s, m.interval))
+		d := jitteredInterval(m.interval)
+		m.nextCheck[s.Name] = now.Add(d)
+		cmds = append(cmds, tickCmd(s, d))
 	}
 	return tea.Batch(cmds...)
 }
@@ -146,12 +204,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.cursor >= 0 {
 					s := m.servers[m.cursor]
 					m.checking[s.Name] = true
+					delete(m.retryAttempt, s.Name)
 					return m, checkCmd(s)
 				}
 				return m, nil
 			case "R":
 				for _, s := range m.servers {
 					m.checking[s.Name] = true
+					delete(m.retryAttempt, s.Name)
 				}
 				return m, checkAllCmd(m.servers)
 			case "a":
@@ -164,26 +224,41 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, s := range m.servers {
 			if s.Name == msg.serverName {
 				m.checking[s.Name] = true
-				m.nextCheck[s.Name] = time.Now().Add(s.interval(m.interval))
+				delete(m.retryAttempt, s.Name)
+				d := jitteredInterval(m.interval)
+				m.nextCheck[s.Name] = time.Now().Add(d)
 				return m, tea.Batch(
 					checkCmd(s),
-					tickCmd(s, m.interval),
+					tickCmd(s, d),
 				)
 			}
 		}
 
-	case resultMsg:
-		r := CheckResult(msg)
-		m.results[r.Name] = r
-		m.checking[r.Name] = false
-		if m.db != nil {
-			go logEvent(m.db, r.Name, r.URL, r.Up)
-			if pct := calcUptime(m.db, r.Name, 24*time.Hour); pct >= 0 {
-				m.uptime[r.Name] = pct
+	case retryMsg:
+		m.checking[msg.server.Name] = true
+		m.retryAttempt[msg.server.Name] = msg.attempt
+		return m, checkAttemptCmd(msg.server, msg.attempt)
+
+	case checkMsg:
+		r := msg.result
+		if isClean(r) || msg.attempt >= len(retryDelays) {
+			m.results[r.Name] = r
+			m.checking[r.Name] = false
+			delete(m.retryAttempt, r.Name)
+			if m.db != nil {
+				go logEvent(m.db, r.Name, r.URL, r.Up)
+				if pct := calcUptime(m.db, r.Name, 24*time.Hour); pct >= 0 {
+					m.uptime[r.Name] = pct
+				}
 			}
+			m.syncAlarm()
+			return m, nil
 		}
-		m.syncAlarm()
-		return m, nil
+
+		nextAttempt := msg.attempt + 1
+		m.checking[r.Name] = true
+		m.retryAttempt[r.Name] = nextAttempt
+		return m, retryDelayCmd(findServer(m.servers, r.Name), nextAttempt)
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -249,7 +324,11 @@ func (m model) View() string {
 
 		var statusStr string
 		if isChecking {
-			statusStr = m.spinner.View() + cStatus.Copy().Render(" checking…")
+			label := " checking…"
+			if attempt := m.retryAttempt[s.Name]; attempt > 0 {
+				label = fmt.Sprintf(" retry %d/%d…", attempt, len(retryDelays))
+			}
+			statusStr = m.spinner.View() + cStatus.Copy().Render(label)
 		} else if hasResult {
 			statusText := r.statusText()
 			switch {
@@ -308,7 +387,11 @@ func (m model) View() string {
 		b.WriteString(row + "\n")
 		if isSelected && hasResult && !r.Up && r.Err != "" {
 			errStyle := styleMuted.Copy().Background(colorSelected).Width(totalWidth)
-			b.WriteString(errStyle.Render("  └ "+r.Err) + "\n")
+			detail := "  └ " + r.Err
+			if r.Retries > 0 {
+				detail += fmt.Sprintf(" (after %d retries)", r.Retries)
+			}
+			b.WriteString(errStyle.Render(detail) + "\n")
 		}
 	}
 

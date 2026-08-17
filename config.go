@@ -8,17 +8,9 @@ import (
 )
 
 type Server struct {
-	Name     string        `yaml:"name"`
-	URL      string        `yaml:"url"`
-	Timeout  time.Duration `yaml:"timeout"`
-	Interval time.Duration `yaml:"interval"`
-}
-
-func (s Server) interval(globalInterval time.Duration) time.Duration {
-    if s.Interval == 0 {
-        return globalInterval
-    }
-    return s.Interval
+	Name    string        `yaml:"name"`
+	URL     string        `yaml:"url"`
+	Timeout time.Duration `yaml:"timeout"`
 }
 
 func (s Server) timeout() time.Duration {
@@ -35,7 +27,7 @@ type Config struct {
 
 func loadConfig(path string) (Config, error) {
 	cfg := Config{
-		Interval: 10 * time.Second, // default refresh interval
+		Interval: 5 * time.Minute, // standardized check interval
 	}
 
 	data, err := os.ReadFile(path)

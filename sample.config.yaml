@@ -1,27 +1,22 @@
-interval: 60s
+interval: 5m
 
 servers:
   - name: HTTPS Check NET
     url: https://www.cloudflare.com
-    interval: 50s
     timeout: 3s
 
   - name: ITCP Check GOOG
     url: tcp://8.8.8.8:53
-    interval: 11s
     timeout: 8s
 
   - name: Test 500
     url: https://httpstat.us/500
-    interval: 5s
     timeout: 35s
 
   - name: Test 404
     url: https://httpstat.us/404
-    interval: 5s
     timeout: 3s
 
   - name: Test CI Failure
     url: gh-actions://sindresorhus/got/refs/heads/repro-2444
-    interval: 120s
     timeout: 10s

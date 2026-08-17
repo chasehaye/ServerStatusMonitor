@@ -19,6 +19,18 @@ type CheckResult struct {
 	Code    int
 	Latency time.Duration
 	Err     string
+	Retries int
+}
+
+// retryDelays is the backoff schedule applied to any check that doesn't come
+// back as a clean 2xx: wait 1s and retry, then 5s, then 10s. If none of the
+// retries come back clean, the last result is final and the alarm sounds.
+// The retry loop itself lives in model.go so the TUI can show which attempt
+// is in flight between delays.
+var retryDelays = []time.Duration{1 * time.Second, 5 * time.Second, 10 * time.Second}
+
+func isClean(r CheckResult) bool {
+	return r.Up && !r.Warn
 }
 
 func checkServer(s Server) CheckResult {
